@@ -292,7 +292,7 @@ function render() {
   const ready = Object.values(S.ready).every(Boolean);
   if (!db) { m.innerHTML = `<div class="empty"><b>Chưa kết nối được kho dữ liệu chung</b>Hãy mở trang này khi đã đăng nhập Claude và được chia sẻ quyền truy cập.</div>`; return; }
   if (!ready) { m.innerHTML = `<div class="empty"><b>Đang tải dữ liệu…</b></div>`; return; }
-  const ro = canWrite ? "" : `<div class="banner">Bạn đang ở chế độ <b>chỉ xem</b>. Muốn nhập liệu, nhờ Quản lý cấp quyền Nhập liệu ở mục Phân quyền.</div>`;
+  const ro = canWrite ? "" : `<div class="banner">Bạn đang ở chế độ <b>chỉ xem</b>. Muốn nhập liệu, nhờ Quản lý cấp quyền Nhập liệu.</div>`;
   m.innerHTML = ro + ({tong:vTong, lenh:vLenh, sp:vSp, kho:vKho, nhap:vNhap}[view])(tinh);
   bindView(tinh);
   resolveNames();
@@ -769,29 +769,33 @@ async function resolveNames() {
   try { const ps=await U.profiles(ids); for (const e of document.querySelectorAll("[data-name]")) e.textContent = ps[e.dataset.name]?.name || ""; } catch {}
 }
 
-/* ---------- bản GitHub: dữ liệu dùng chung qua Firebase (chung dự án & tài khoản với AnviFa) ---------- */
-const ADMIN_EMAIL = "phim.hoat.hinh.tiktok24@gmail.com";
+/* ---------- bản GitHub: dữ liệu dùng chung qua Firebase (dự án Firebase riêng của TNP) ---------- */
+/* ====== CẤU HÌNH — điền từ Firebase Console (Project settings → General → Your apps → SDK setup and configuration → Config) ====== */
+const ADMIN_EMAIL = "DIEN_EMAIL_QUAN_LY";   // email tài khoản Quản lý, luôn có toàn quyền
 const firebaseConfig = {
-  apiKey: "AIzaSyDHDlqO_QrwOSiBf2SUIIQGC_7w0zQbg3g",
-  authDomain: "anvifa-app.firebaseapp.com",
-  projectId: "anvifa-app",
-  storageBucket: "anvifa-app.firebasestorage.app",
-  messagingSenderId: "903165167895",
-  appId: "1:903165167895:web:7387f2bf78eb95a23c8f52"
+  apiKey: "PASTE_apiKey",
+  authDomain: "PASTE_authDomain",
+  projectId: "PASTE_projectId",
+  storageBucket: "PASTE_storageBucket",
+  messagingSenderId: "PASTE_messagingSenderId",
+  appId: "PASTE_appId"
 };
+/* ====== HẾT PHẦN CẤU HÌNH ====== */
+const USERS = "tnp_users";
 const PREFIX = "tnp_";
 const COLS = ["kho","sp","lenh","nhap"];
 const FBV = "10.14.1";
-let F = null, A = null, fdb = null, auth = null, me = null, isAdmin = false, profiles = {}, unsubs = [], connState = "wait";
+let appM = null, F = null, A = null, fdb = null, auth = null, me = null, isAdmin = false, profiles = {}, unsubs = [], connState = "wait";
 const emailKey = e => String(e||"").trim().toLowerCase();
-const QUYEN = { ghi:"Nhập liệu", xem:"Chỉ xem", "":"Không dùng Kho TNP" };
+
+const QUYEN = { admin:"Quản lý (toàn quyền)", ghi:"Nhập liệu", xem:"Chỉ xem" };
 
 function backupInfo(){
   const el=$("#who"); if(!el) return;
   if (!me) { el.innerHTML = `<span>${connState==="wait"?"Đang kết nối…":"Chưa đăng nhập"}</span>`; return; }
-  el.innerHTML = `<button class="btn sm" id="data-btn">Dữ liệu & sao lưu</button>${isAdmin?` <button class="btn sm" id="perm-btn">Phân quyền</button>`:""} <span>${esc(profiles[me]?.name||me)} · ${canWrite?"Nhập liệu":"Chỉ xem"}</span> <button class="btn sm" id="out-btn">Đăng xuất</button>`;
+  el.innerHTML = `<button class="btn sm" id="data-btn">Dữ liệu & sao lưu</button>${isAdmin?` <button class="btn sm" id="perm-btn">Tài khoản</button>`:""} <button class="btn sm" id="pw-btn">Đổi mật khẩu</button> <span>${esc(profiles[me]?.name||me)} · ${canWrite?"Nhập liệu":"Chỉ xem"}</span> <button class="btn sm" id="out-btn">Đăng xuất</button>`;
   $("#data-btn").onclick=mData; $("#out-btn").onclick=()=>A.signOut(auth);
-  if (isAdmin) $("#perm-btn").onclick=mPerm;
+  if (isAdmin) $("#perm-btn").onclick=mPerm; $("#pw-btn").onclick=mPw;
 }
 function dl(name, text, type){ const b=new Blob([text],{type}); const a=document.createElement("a"); a.href=URL.createObjectURL(b); a.download=name; document.body.append(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},500); }
 const stampName=()=>{ const d=new Date(); return d.getFullYear()+String(d.getMonth()+1).padStart(2,"0")+String(d.getDate()).padStart(2,"0")+"_"+String(d.getHours()).padStart(2,"0")+String(d.getMinutes()).padStart(2,"0"); };
@@ -839,7 +843,7 @@ write = async (fn, ok) => {
   try { await fn(); if (ok) toast(ok); return true; }
   catch (e0) {
     const e = fbErr(e0);
-    if (e?.code === "rules") { toast("Firebase chưa cho phép ghi vào Kho TNP. Cần thêm luật (xem hướng dẫn)."); console.error(e0); return false; }
+    if (e?.code === "rules") { toast("Firebase không cho phép ghi. Kiểm tra quyền tài khoản hoặc luật Firestore."); console.error(e0); return false; }
     return _write(() => { throw e; }, ok);
   }
 };
@@ -880,17 +884,49 @@ function mData(){
   });
 }
 function mPerm(){
-  const list = Object.values(profiles).filter(p=>p.email!==ADMIN_EMAIL && p.active!==false).sort((a,b)=>sortVi(a.name||a.email,b.name||b.email));
-  const ov = modal("Phân quyền Kho TNP", `
-    <p class="hint">Danh sách là các tài khoản đã tạo trong app AnviFa. Người mới: tạo tài khoản trong app AnviFa trước (mục Quản lý → Tài khoản), rồi quay lại đây chọn quyền. Tài khoản Quản lý (admin) luôn có quyền nhập liệu.</p>
-    <div class="tbl-wrap"><table><thead><tr><th>Người dùng</th><th>Quyền Kho TNP</th></tr></thead><tbody>
-    ${list.map(p=>`<tr><td><b>${esc(p.name||p.email)}</b><br><span class="mut">${esc(p.email)}${p.role==="admin"?" · Quản lý":""}</span></td><td>${p.role==="admin"?"Nhập liệu":`<select data-em="${esc(p.email)}">${Object.entries(QUYEN).map(([v,l])=>`<option value="${v}" ${(p.tnp||"")===v?"selected":""}>${l}</option>`).join("")}</select>`}</td></tr>`).join("") || `<tr><td colspan="2" class="mut">Chưa có tài khoản nào khác.</td></tr>`}
-    </tbody></table></div>`, `<button class="btn" data-close>Đóng</button>`, true);
-  ov.addEventListener("change", async e => {
-    const s = e.target.closest("select[data-em]"); if (!s) return;
-    try { await F.setDoc(F.doc(fdb,"anvifa_users",s.dataset.em), {tnp:s.value}, {merge:true}); toast("Đã lưu quyền"); }
-    catch(err){ console.error(err); toast("Chưa lưu được quyền: "+(err.code||err.message)); }
+  const list = Object.values(profiles).filter(p=>p.email!==emailKey(ADMIN_EMAIL)).sort((a,b)=>sortVi(a.name||a.email,b.name||b.email));
+  const opt = v => Object.entries(QUYEN).map(([k,l])=>`<option value="${k}" ${v===k?"selected":""}>${l}</option>`).join("");
+  const ov = modal("Tài khoản Kho TNP", `
+    <div class="panel"><h3>Tạo tài khoản mới</h3><div class="bd" style="padding:14px 16px;display:grid;gap:8px;grid-template-columns:repeat(auto-fit,minmax(160px,1fr))">
+      <label>Họ tên<input id="nu-ten" style="width:100%"></label>
+      <label>Email<input id="nu-em" type="email" style="width:100%"></label>
+      <label>Mật khẩu (≥ 6 ký tự)<input id="nu-pw" style="width:100%"></label>
+      <label>Quyền<select id="nu-q" style="width:100%">${opt("ghi")}</select></label>
+      <div style="align-self:end"><button class="btn primary" data-a="nu">Tạo tài khoản</button></div></div></div>
+    <div class="tbl-wrap"><table><thead><tr><th>Người dùng</th><th>Quyền</th><th>Trạng thái</th></tr></thead><tbody>
+    <tr><td><b>${esc(profiles[emailKey(ADMIN_EMAIL)]?.name||"Quản lý")}</b><br><span class="mut">${esc(emailKey(ADMIN_EMAIL))}</span></td><td>Quản lý gốc</td><td>Luôn hoạt động</td></tr>
+    ${list.map(p=>`<tr><td><b>${esc(p.name||p.email)}</b><br><span class="mut">${esc(p.email)}</span></td><td><select data-em="${esc(p.email)}" data-f="quyen">${opt(p.quyen||"xem")}</select></td>
+      <td><button class="btn sm ${p.active===false?"":"danger"}" data-a="lock" data-em="${esc(p.email)}">${p.active===false?"Mở khóa":"Khóa"}</button></td></tr>`).join("")}
+    </tbody></table></div>
+    <p class="hint">Nhân viên quên mật khẩu: bấm “Quên mật khẩu” ở màn hình đăng nhập, Firebase sẽ gửi email đặt lại.</p>`, `<button class="btn" data-close>Đóng</button>`, true);
+  const save = async (em, patch, msg) => { try { await F.setDoc(F.doc(fdb,USERS,em), patch, {merge:true}); toast(msg); } catch(err){ console.error(err); toast("Chưa lưu được: "+(err.code||err.message)); } };
+  ov.addEventListener("change", e => { const s=e.target.closest("select[data-em]"); if (s) save(s.dataset.em, {quyen:s.value}, "Đã lưu quyền"); });
+  ov.addEventListener("click", async e => {
+    const t=e.target.closest("[data-a]"); if(!t) return;
+    if (t.dataset.a==="lock") { const p=profiles[t.dataset.em]; await save(t.dataset.em, {active: p.active===false}, p.active===false?"Đã mở khóa":"Đã khóa tài khoản"); closeModal(); setTimeout(mPerm,200); }
+    if (t.dataset.a==="nu") {
+      const ten=$("#nu-ten").value.trim(), em=emailKey($("#nu-em").value), pw=$("#nu-pw").value, q=$("#nu-q").value;
+      if (!ten||!em||pw.length<6) return showErr(ov,"Nhập đủ họ tên, email và mật khẩu từ 6 ký tự.");
+      t.disabled=true; t.textContent="Đang tạo…";
+      const sec = appM.initializeApp(firebaseConfig, "tao-"+Date.now());
+      try { const sa=A.getAuth(sec); await A.createUserWithEmailAndPassword(sa, em, pw); try{await A.signOut(sa);}catch{} }
+      catch(err){ t.disabled=false; t.textContent="Tạo tài khoản"; try{await appM.deleteApp(sec);}catch{}
+        if (err.code!=="auth/email-already-in-use") return showErr(ov, err.code==="auth/invalid-email"?"Email không hợp lệ.":err.code==="auth/weak-password"?"Mật khẩu quá yếu.":"Chưa tạo được: "+(err.code||err.message)); }
+      try{await appM.deleteApp(sec);}catch{}
+      await save(em, {email:em, name:ten, quyen:q, active:true}, `Đã tạo tài khoản ${em}`);
+      closeModal(); setTimeout(mPerm,200);
+    }
   });
+}
+function mPw(){
+  const ov = modal("Đổi mật khẩu", `<div style="display:grid;gap:10px">
+    <label>Mật khẩu hiện tại<input type="password" id="pw-old" style="width:100%"></label>
+    <label>Mật khẩu mới (≥ 6 ký tự)<input type="password" id="pw-new" style="width:100%"></label></div>`,
+    `<button class="btn primary" data-a="pw">Lưu</button><button class="btn" data-close>Hủy</button>`);
+  ov.addEventListener("click", async e => { if (!e.target.closest('[data-a="pw"]')) return;
+    const o=$("#pw-old").value, n=$("#pw-new").value; if (n.length<6) return showErr(ov,"Mật khẩu mới cần từ 6 ký tự.");
+    try { const u=auth.currentUser; await A.reauthenticateWithCredential(u, A.EmailAuthProvider.credential(u.email,o)); await A.updatePassword(u,n); closeModal(); toast("Đã đổi mật khẩu"); }
+    catch(err){ showErr(ov, err.code==="auth/invalid-credential"||err.code==="auth/wrong-password"?"Mật khẩu hiện tại không đúng.":"Chưa đổi được: "+(err.code||err.message)); } });
 }
 
 /* ---------- đăng nhập ---------- */
@@ -899,7 +935,7 @@ function showLogin(msg){
   for (const c of COLS) { S[c]={}; S.ready[c]=0; }
   backupInfo();
   $("#main").innerHTML = `<div class="panel" style="max-width:400px;margin:40px auto"><h3>Đăng nhập Kho TNP</h3><form class="bd" id="lg" style="padding:16px;display:grid;gap:10px">
-    <p class="hint" style="margin:0">Dùng tài khoản email & mật khẩu giống app AnviFa.</p>
+    <p class="hint" style="margin:0">Dùng email & mật khẩu do Quản lý cấp.</p>
     ${msg?`<div class="err">${esc(msg)}</div>`:""}
     <label>Email<input type="email" id="lg-em" required autocomplete="username" style="width:100%"></label>
     <label>Mật khẩu<input type="password" id="lg-pw" required autocomplete="current-password" style="width:100%"></label>
@@ -915,21 +951,20 @@ async function onUser(u){
   if (!u || u.isAnonymous || !u.email) return showLogin();
   const em = emailKey(u.email);
   let p = null;
-  try { const s = await F.getDoc(F.doc(fdb,"anvifa_users",em)); p = s.exists()? s.data() : null; } catch(e){ console.error(e); }
-  if (em === ADMIN_EMAIL) p = {...(p||{}), email:em, role:"admin", active:true};
-  if (!p || p.active === false) { await A.signOut(auth); return showLogin(p ? "Tài khoản này đã bị khóa." : "Tài khoản "+em+" chưa được cấp quyền."); }
-  isAdmin = p.role === "admin";
-  const q = isAdmin ? "ghi" : (p.tnp || "");
-  if (!q) { await A.signOut(auth); return showLogin("Tài khoản "+em+" chưa được cấp quyền dùng Kho TNP. Liên hệ Quản lý."); }
+  try { const s = await F.getDoc(F.doc(fdb,USERS,em)); p = s.exists()? s.data() : null; } catch(e){ console.error(e); }
+  if (em === emailKey(ADMIN_EMAIL)) { if (!p || p.quyen!=="admin" || p.active===false) { p = {name:"Quản lý TNP", ...(p||{}), email:em, quyen:"admin", active:true}; try { await F.setDoc(F.doc(fdb,USERS,em), p); } catch(e){ console.error(e); } } }
+  if (!p || p.active === false) { await A.signOut(auth); return showLogin(p ? "Tài khoản này đã bị khóa. Liên hệ Quản lý." : "Tài khoản "+em+" chưa được cấp quyền dùng Kho TNP. Liên hệ Quản lý."); }
+  isAdmin = p.quyen === "admin";
+  const q = isAdmin ? "ghi" : (p.quyen || "xem");
   me = em; myId = em; canWrite = q === "ghi"; profiles[em] = p;
   db = makeDb(); connState = "ok";
   for (const c of COLS) { S.ready[c]=0; }
   render(); backupInfo();
-  unsubs.push(F.onSnapshot(F.collection(fdb,"anvifa_users"), s => { for (const d of s.docs) profiles[d.id] = {email:d.id, ...d.data()}; resolveNames(); }, e => console.warn("profiles", e)));
+  if (isAdmin) unsubs.push(F.onSnapshot(F.collection(fdb,USERS), s => { for (const d of s.docs) profiles[d.id] = {email:d.id, ...d.data()}; resolveNames(); backupInfo(); }, e => console.warn("profiles", e)));
   for (const col of COLS) {
     db.collection(col).onSnapshot(snap => { const o={}; for (const x of snap.docs) o[x.id]=x.data(); S[col]=o; S.ready[col]=1; render(); backupInfo();
         if (isAdmin && col==="nhap" && COLS.every(c=>S.ready[c]) && !COLS.some(c=>Object.keys(S[c]).length)) setTimeout(mData, 300); },
-      err => { console.error(err); if (err.code==="permission-denied") $("#main").innerHTML = `<div class="empty"><b>Firebase chưa cho phép đọc dữ liệu Kho TNP</b>Cần thêm luật cho các bảng tnp_ trong Firebase Console → Firestore → Rules.</div>`; else toast("Mất kết nối dữ liệu, đang thử lại…"); });
+      err => { console.error(err); if (err.code==="permission-denied") $("#main").innerHTML = `<div class="empty"><b>Firebase chưa cho phép đọc dữ liệu Kho TNP</b>Kiểm tra lại luật trong Firebase Console → Firestore → Rules.</div>`; else toast("Mất kết nối dữ liệu, đang thử lại…"); });
   }
 }
 
@@ -937,7 +972,8 @@ async function onUser(u){
 render(); backupInfo();
 (async () => {
   try {
-    const [appM, fsM, auM] = await Promise.all([
+    if (firebaseConfig.apiKey.startsWith("PASTE") || ADMIN_EMAIL.startsWith("DIEN")) { connState="none"; backupInfo(); $("#main").innerHTML=`<div class="empty"><b>Chưa cấu hình Firebase</b>Mở file index.html, điền phần CẤU HÌNH (email Quản lý và 6 dòng firebaseConfig).</div>`; return; }
+    let fsM, auM; [appM, fsM, auM] = await Promise.all([
       import(`https://www.gstatic.com/firebasejs/${FBV}/firebase-app.js`),
       import(`https://www.gstatic.com/firebasejs/${FBV}/firebase-firestore.js`),
       import(`https://www.gstatic.com/firebasejs/${FBV}/firebase-auth.js`)]);
